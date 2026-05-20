@@ -584,7 +584,9 @@ proc srcdist(c: var ConfigData) =
 # --------------------- generate inno setup -----------------------------------
 proc setupDist(c: var ConfigData) =
   let scrpt = generateInnoSetup(c)
-  let n = "build" / "install_$#_$#.iss" % [toLowerAscii(c.name), c.version]
+  let outDir = if c.outdir.len == 0: "build" else: c.outdir
+  if not dirExists(outDir): createDir(outDir)
+  let n = outDir / "install_$#_$#.iss" % [toLowerAscii(c.name), c.version]
   writeFile(n, scrpt, "\13\10")
   when defined(windows):
     if c.innosetup.path.len == 0:
@@ -601,7 +603,9 @@ proc setupDist(c: var ConfigData) =
 # --------------------- generate NSIS setup -----------------------------------
 proc setupDist2(c: var ConfigData) =
   let scrpt = generateNsisSetup(c)
-  let n = "build" / "install_$#_$#.nsi" % [toLowerAscii(c.name), c.version]
+  let outDir = if c.outdir.len == 0: "build" else: c.outdir
+  if not dirExists(outDir): createDir(outDir)
+  let n = outDir / "install_$#_$#.nsi" % [toLowerAscii(c.name), c.version]
   writeFile(n, scrpt, "\13\10")
   when defined(windows):
     if c.nsisSetup.path.len == 0:
