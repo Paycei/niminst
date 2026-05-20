@@ -42,3 +42,6 @@ xcuserdata/
 /testresults.json
 testament.db
 /csources
+nimble.develop
+nimble.paths
+nimbledeps

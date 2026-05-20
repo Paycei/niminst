@@ -9,42 +9,55 @@ DefaultDirName={code:GiveMeAPath|$c.displayName}
 DefaultGroupName=$c.displayName
 AllowNoIcons=yes
 LicenseFile=${expandFilename(c.license)}
-OutputBaseFilename=${c.name}_${c.version}
+OutputBaseFilename=${if c.innosetup.installerName.len > 0: c.innosetup.installerName & "_" & c.version else: c.name & "_" & c.version}
 Compression=lzma
 SolidCompression=yes
 PrivilegesRequired=none
+ArchitecturesInstallIn64BitMode=x64compatible
 ChangesEnvironment=yes
+Uninstallable=no
+CreateUninstallRegKey=no
+DisableDirPage=no
+DisableProgramGroupPage=no
+SetupIconFile=${expandFilename(getAppDir() / "setup.ico").toWin}
+UninstallDisplayIcon={app}\uninstall.ico
 
 [Languages]
 Name: english; MessagesFile: compiler:Default.isl
 
-[Files]
+[Files] 
   #for i in low(FileCategory)..fcWindows:
   #  for f in items(c.cat[i]):
-Source: ${expandFilename(f).toWin}; DestDir: {app}\${splitFile(f).dir.toWin}; Flags: ignoreversion
+  #    let fDir = if isAbsolute(f): "" else: splitFile(f).dir
+Source: ${expandFilename(f).toWin}; DestDir: {app}${if fDir.len > 0: "\\" & fDir.toWin else: ""}; Flags: ignoreversion
   #  end for
   #end for
 
-[Icons]
-  #if c.app == appConsole:
-Name: {group}\Console for $c.displayName; Filename: {cmd}
-  #else:
-Name: {group}\$c.displayName; Filename: {app}\${c.name}.exe
-  #end if
-  #for f in items(c.cat[fcDocStart]):
-Name: {group}\Documentation; Filename: {app}\${f.toWin}
-  #end for
-Name: {group}\{cm:UninstallProgram,$c.displayName}; Filename: {uninstallexe}
-
-  #if c.binPaths.len > 0:
 [Tasks]
+Name: desktopicon; Description: {cm:CreateDesktopIcon}; GroupDescription: {cm:AdditionalIcons}
+Name: startmenuicon; Description: Create a &Start Menu shortcut; GroupDescription: {cm:AdditionalIcons}
+  #if c.binPaths.len > 0:
 Name: modifypath; Description: &Add $c.displayName to your system path (if not in path already);
   #end if
+
+[Icons]
+  #if c.app == appConsole:
+Name: {group}\Console for $c.displayName; Filename: {cmd}; Tasks: startmenuicon
+  #else:
+Name: {group}\$c.displayName; Filename: {app}\${c.name}.exe; Tasks: startmenuicon
+  #end if
+  #for f in items(c.cat[fcDocStart]):
+Name: {group}\Documentation; Filename: {app}\${f.toWin}; Tasks: startmenuicon
+  #end for
+Name: {commondesktop}\$c.displayName; Filename: {app}\${c.name}.exe; Tasks: desktopicon
+
+[Run]
+Filename: {app}\${c.name & ".exe"}; Description: {cm:LaunchProgram,$c.displayName}; Flags: nowait postinstall skipifsilent
 
 [Code]
 function GiveMeAPath(const DefaultPathName: string): string;
 begin
-  if IsAdminLoggedOn then result := ExpandConstant('{pf}')
+  if IsAdminLoggedOn then result := ExpandConstant('{pf64}')
   else result := ExpandConstant('{userdocs}');
   result := result + '\' + DefaultPathName;
 end;
@@ -154,14 +167,40 @@ begin
   end;
 end;
 
+  #end if
+
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  uninstKey: String;
 begin
   if CurStep = ssPostInstall then begin
+    #if c.binPaths.len > 0:
     if IsTaskSelected('modifypath') then
       ModPath();
-  end
+    #end if
+
+    // Write our own Add/Remove Programs entry pointing at uninstaller.exe
+    uninstKey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\$c.name';
+    RegWriteStringValue(HKLM, uninstKey, 'DisplayName', '$c.displayName');
+    RegWriteStringValue(HKLM, uninstKey, 'DisplayVersion', '$c.version');
+    RegWriteStringValue(HKLM, uninstKey, 'Publisher', '${c.authors[0]}');
+    RegWriteStringValue(HKLM, uninstKey, 'InstallLocation', ExpandConstant('{app}'));
+    RegWriteStringValue(HKLM, uninstKey, 'UninstallString',
+      '"' + ExpandConstant('{app}') + '\uninstaller.exe"');
+    RegWriteStringValue(HKLM, uninstKey, 'DisplayIcon',
+      ExpandConstant('{app}') + '\${c.name}.exe');
+    RegWriteDWordValue(HKLM, uninstKey, 'NoModify', 1);
+    RegWriteDWordValue(HKLM, uninstKey, 'NoRepair', 1);
+
+    // Store shortcut paths so uninstaller.exe can remove them later
+    RegWriteStringValue(HKLM, uninstKey, 'DesktopShortcut',
+      ExpandConstant('{commondesktop}') + '\${c.displayName}.lnk');
+    RegWriteStringValue(HKLM, uninstKey, 'StartMenuShortcut',
+      ExpandConstant('{group}') + '\${c.displayName}.lnk');
+  end;
 end;
 
+  #if c.binPaths.len > 0:
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   appdir, selectedTasks: String;
