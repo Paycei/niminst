@@ -1,6 +1,6 @@
 # Package
 
-version       = "1.0.0"
+version       = "1.1.0"
 author        = "Paycei"
 description   = "Custom niminst package for TopHat-Shooteros"
 license       = "MIT"
