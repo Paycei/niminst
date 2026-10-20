@@ -5,8 +5,10 @@ Quick build
 Install dependencies:
 
 ```
-nimble install checksums
+nimble install -d
 ```
+
+Requires **Nim 2.2.12** or newer.
 
 **Inno Setup 7** [Download](https://jrsoftware.org/isdl.php/Inno-Setup-Downloads#v7)
 
@@ -21,6 +23,12 @@ Build the `custom uninstaller` executable:
 ```
 nimble uninstaller
 ```
+
+The generated installer always requires administrator rights (per-machine
+install), and the uninstaller restarts itself elevated when needed. Its display
+name and registry key default to TopHat-ShooterOS; they must match the `Name`
+in your `.ini` file, and can be changed with
+`-d:AppDisplayName=...` and `-d:AppRegKey=Software\Microsoft\Windows\CurrentVersion\Uninstall\<Name>`.
 
 License
 -------

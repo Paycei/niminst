@@ -8,15 +8,10 @@
 #
 
 import
-  os, strutils, parseopt, parsecfg, strtabs, streams, debcreation
+  std/[os, strutils, parseopt, parsecfg, strtabs, streams, syncio],
+  debcreation
 
 import checksums/sha1
-
-when defined(nimPreviewSlimSystem):
-  import std/syncio
-
-when not defined(nimHasEffectsOf):
-  {.pragma: effectsOf.}
 
 const
   maxOS = 20 # max number of OSes
@@ -128,6 +123,15 @@ func skipRoot(f: string): string =
     inc i
   if result.len == 0: result = f
 
+func pasStr(s: string): string =
+  ## escapes `s` for use inside a single-quoted Pascal Script string literal
+  s.replace("'", "''")
+
+func docShortcutName(c: ConfigData, f: string): string =
+  ## Start Menu shortcut name for the documentation file `f`; several files
+  ## are named after themselves so their shortcuts don't overwrite each other
+  if c.cat[fcDocStart].len == 1: "Documentation" else: splitFile(f).name
+
 include "inno.nimf"
 include "nsis.nimf"
 include "buildsh.nimf"
@@ -236,7 +240,7 @@ func ignoreFile(f, explicit: string, allowHtml: bool): bool =
 proc walkDirRecursively(s: var seq[string], root, explicit: string,
                         allowHtml: bool) =
   let tail = splitPath(root).tail
-  if tail == "nimcache" or tail[0] == '.':
+  if tail == "nimcache" or tail.startsWith('.'):
     return
   let allowHtml = allowHtml or tail == "doc"
   for k, f in walkDir(root):
@@ -356,7 +360,7 @@ proc parseIniFile(c: var ConfigData) =
             of "console": c.app = appConsole
             of "gui": c.app = appGUI
             else: quit(errorStr(p, "expected: console or gui"))
-          of "license": c.license = unixToNativePath(k.value)
+          of "license": c.license = unixToNativePath(v)
           else: quit(errorStr(p, "unknown variable: " & k.key))
         of "var": discard
         of "winbin": filesOnly(p, k.key, v, c.cat[fcWinBin])
@@ -500,7 +504,7 @@ proc deduplicateFiles(c: var ConfigData) =
         let orig = tab.getOrDefault(key)
         if orig.len > 0:
           # file is identical, so delete duplicate:
-          removeFile(dup)
+          removeFile(build / dup)
           dup = orig
         else:
           tab[key] = val
@@ -584,14 +588,19 @@ proc srcdist(c: var ConfigData) =
 # --------------------- generate inno setup -----------------------------------
 proc setupDist(c: var ConfigData) =
   let scrpt = generateInnoSetup(c)
-  let n = "build" / "install_$#_$#.iss" % [toLowerAscii(c.name), c.version]
+  let outDir = if c.outdir.len == 0: "build" else: c.outdir
+  if not dirExists(outDir): createDir(outDir)
+  let n = outDir / "install_$#_$#.iss" % [toLowerAscii(c.name), c.version]
   writeFile(n, scrpt, "\13\10")
   when defined(windows):
     if c.innosetup.path.len == 0:
       c.innosetup.path = "iscc.exe"
-    let outcmd = if c.outdir.len == 0: "build" else: c.outdir
+    # absolute and quoted, so the output location neither depends on how ISCC
+    # resolves relative paths nor breaks on spaces
     let cmd = "$# $# /O$# $#" % [quoteShell(c.innosetup.path),
-                                 c.innosetup.flags, outcmd, n]
+                                 c.innosetup.flags,
+                                 quoteShell(absolutePath(outDir)),
+                                 quoteShell(n)]
     echo(cmd)
     if execShellCmd(cmd) == 0:
       removeFile(n)
@@ -601,14 +610,17 @@ proc setupDist(c: var ConfigData) =
 # --------------------- generate NSIS setup -----------------------------------
 proc setupDist2(c: var ConfigData) =
   let scrpt = generateNsisSetup(c)
-  let n = "build" / "install_$#_$#.nsi" % [toLowerAscii(c.name), c.version]
+  let outDir = if c.outdir.len == 0: "build" else: c.outdir
+  if not dirExists(outDir): createDir(outDir)
+  let n = outDir / "install_$#_$#.nsi" % [toLowerAscii(c.name), c.version]
   writeFile(n, scrpt, "\13\10")
   when defined(windows):
     if c.nsisSetup.path.len == 0:
       c.nsisSetup.path = "makensis.exe"
-    let outcmd = if c.outdir.len == 0: "build" else: c.outdir
-    let cmd = "$# $# /O$# $#" % [quoteShell(c.nsisSetup.path),
-                                 c.nsisSetup.flags, outcmd, n]
+    # makensis' /O names a log file, not an output directory; the installer is
+    # written next to the script because makensis changes into its directory
+    let cmd = "$# $# $#" % [quoteShell(c.nsisSetup.path),
+                            c.nsisSetup.flags, quoteShell(n)]
     echo(cmd)
     if execShellCmd(cmd) == 0:
       removeFile(n)
@@ -617,27 +629,28 @@ proc setupDist2(c: var ConfigData) =
 
 proc xzDist(c: var ConfigData; windowsZip=false) =
   let proj = toLowerAscii(c.name) & "-" & c.version
-  let tmpDir = if c.outdir.len == 0: "build" else: c.outdir
+  let tmpDir = getOutputDir(c)
 
   proc processFile(destFile, src: string) =
     let dest = tmpDir / destFile
     when false: echo "Copying ", src, " to ", dest
     if not fileExists(src):
       echo "[Warning] Source file doesn't exist: ", src
+      return
     let destDir = dest.splitFile.dir
     if not dirExists(destDir): createDir(destDir)
     copyFileWithPermissions(src, dest)
 
-  if not windowsZip and not fileExists("build" / buildBatFile):
-    quit("No C sources found in ./build/, please build by running " &
-         "./koch csource -d:danger.")
+  if not windowsZip and not fileExists(tmpDir / buildBatFile):
+    quit("No C sources found in " & tmpDir & ", please build them by " &
+         "running niminst csource first.")
 
   if not windowsZip:
-    processFile(proj / buildBatFile, "build" / buildBatFile)
-    processFile(proj / buildBatFile32, "build" / buildBatFile32)
-    processFile(proj / buildBatFile64, "build" / buildBatFile64)
-    processFile(proj / buildShFile, "build" / buildShFile)
-    processFile(proj / makeFile, "build" / makeFile)
+    processFile(proj / buildBatFile, tmpDir / buildBatFile)
+    processFile(proj / buildBatFile32, tmpDir / buildBatFile32)
+    processFile(proj / buildBatFile64, tmpDir / buildBatFile64)
+    processFile(proj / buildShFile, tmpDir / buildShFile)
+    processFile(proj / makeFile, tmpDir / makeFile)
     processFile(proj / installShFile, installShFile)
     processFile(proj / deinstallShFile, deinstallShFile)
     template processFileAux(src, dst) = processFile(dst, src)
@@ -645,7 +658,7 @@ proc xzDist(c: var ConfigData; windowsZip=false) =
     for osA in 1..c.oses.len:
       for cpuA in 1..c.cpus.len:
         var dir = buildDir(osA, cpuA)
-        for k, f in walkDir("build" / dir):
+        for k, f in walkDir(tmpDir / dir):
           if k == pcFile: processFile(proj / dir / extractFilename(f), f)
   else:
     for f in items(c.cat[fcWinBin]):
@@ -658,8 +671,9 @@ proc xzDist(c: var ConfigData; windowsZip=false) =
     for f in items(c.cat[cat]): processFile(proj / f, f)
 
   # Copy the .nimble file over
-  let nimbleFile = c.nimblePkgName & ".nimble"
-  processFile(proj / nimbleFile, nimbleFile)
+  if c.nimblePkgName.len > 0:
+    let nimbleFile = c.nimblePkgName & ".nimble"
+    processFile(proj / nimbleFile, nimbleFile)
 
   when true:
     let oldDir = getCurrentDir()
@@ -691,16 +705,24 @@ RunProgram="tools\downloader.exe"
 # -- prepare build files for .deb creation
 
 proc debDist(c: var ConfigData) =
-  if not fileExists(getOutputDir(c) / "build.sh"): quit("No build.sh found.")
-  if not fileExists(getOutputDir(c) / "install.sh"): quit("No install.sh found.")
+  let build = getOutputDir(c)
+  # build.sh and makefile are written by ``csource`` into the output
+  # directory, install.sh by ``scripts`` into the current directory
+  if not fileExists(build / buildShFile): quit("No build.sh found.")
+  if not fileExists(installShFile): quit("No install.sh found.")
 
   if c.debOpts.shortDesc == "": quit("shortDesc must be set in the .ini file.")
   if c.debOpts.licenses.len == 0:
     echo("[Warning] No licenses specified for .deb creation.")
 
+  let mtnName = c.vars.getOrDefault("mtnname")
+  let mtnEmail = c.vars.getOrDefault("mtnemail")
+  if mtnName.len == 0 or mtnEmail.len == 0:
+    quit("mtnName and mtnEmail must be set in the [Var] section of the .ini " &
+         "file or with --var.")
+
   # -- Copy files into /tmp/..
   echo("Copying source to tmp/niminst/deb/")
-  var currentSource = getCurrentDir()
   var workingDir = getTempDir() / "niminst" / "deb"
   var upstreamSource = (c.name.toLowerAscii() & "-" & c.version)
 
@@ -708,26 +730,24 @@ proc debDist(c: var ConfigData) =
 
   template copyNimDist(f, dest: string) =
     createDir((workingDir / upstreamSource / dest).splitFile.dir)
-    copyFile(currentSource / f, workingDir / upstreamSource / dest)
+    copyFile(f, workingDir / upstreamSource / dest)
 
   # Don't copy all files, only the ones specified in the config:
-  copyNimDist(buildShFile, buildShFile)
-  copyNimDist(makeFile, makeFile)
+  copyNimDist(build / buildShFile, buildShFile)
+  copyNimDist(build / makeFile, makeFile)
   copyNimDist(installShFile, installShFile)
-  createDir(workingDir / upstreamSource / "build")
-  gatherFiles(copyNimDist, c.libpath, "build")
+  # same layout as the C sources in the output directory, which is what
+  # build.sh and the makefile expect
+  gatherFiles(copyNimDist, c.libpath, "c_code")
   for osA in 1..c.oses.len:
     for cpuA in 1..c.cpus.len:
       var dir = buildDir(osA, cpuA)
-      for k, f in walkDir(dir):
+      for k, f in walkDir(build / dir):
         if k == pcFile: copyNimDist(f, dir / extractFilename(f))
   for cat in items({fcConfig..fcOther, fcUnix}):
     for f in items(c.cat[cat]): copyNimDist(f, f)
 
   # -- Create necessary build files for debhelper.
-
-  let mtnName = c.vars["mtnname"]
-  let mtnEmail = c.vars["mtnemail"]
 
   prepDeb(c.name, c.version, mtnName, mtnEmail, c.debOpts.shortDesc,
           c.description, c.debOpts.licenses, c.cat[fcUnixBin], c.cat[fcConfig],

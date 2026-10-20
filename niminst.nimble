@@ -9,7 +9,8 @@ bin           = @["niminst"]
 
 # Dependencies
 
-requires "nim >= 2.2.10"
+requires "nim >= 2.2.12"
+requires "checksums >= 0.2.2"
 
 task release, "Build Niminst for release":
   exec "nim c -d:release --out:niminst.exe src/niminst.nim"

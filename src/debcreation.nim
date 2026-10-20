@@ -7,11 +7,7 @@
 #    distribution, for details about the copyright.
 #
 
-import osproc, times, os, strutils
-
-
-when defined(nimPreviewSlimSystem):
-  import std/[assertions, syncio]
+import std/[osproc, times, os, strutils, assertions, syncio]
 
 # http://www.debian.org/doc/manuals/maint-guide/
 
@@ -50,8 +46,8 @@ proc createControl(pkgName, maintainer, shortDesc, desc: string,
   addN("Maintainer: " & maintainer)
   addN("Section: misc")
   addN("Priority: optional")
-  addN("Standards-Version: 3.9.2")
-  addN("Build-Depends: debhelper (>= 8)" &
+  addN("Standards-Version: 4.7.4")
+  addN("Build-Depends: debhelper-compat (= 13)" &
         (if buildDepends != "": ", " & buildDepends else: ""))
   addN("\n")
   addN("Package: " & pkgName)
@@ -192,9 +188,6 @@ proc prepDeb*(packName, version, mtnName, mtnEmail, shortDesc, desc: string;
 
   echo("debian/rules")
   writeDebian("rules", createRules())
-
-  echo("debian/compat")
-  writeDebian("compat", "8")
 
   echo("debian/" & pkgName & ".install")
   writeDebian(pkgName & ".install",

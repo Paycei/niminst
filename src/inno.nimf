@@ -1,18 +1,21 @@
 #? stdtmpl | standard
 #proc generateInnoSetup(c: ConfigData): string =
 #  result = ""
+#  let startMenuName = if c.app == appConsole: "Console for " & c.displayName
+#                      else: c.displayName
+#  let publisher = if c.authors.len > 0: c.authors[0] else: ""
 ; Default Template for NimInst
 [Setup]
 AppName=$c.displayName
 AppVerName=$c.displayName $c.version
-DefaultDirName={code:GiveMeAPath|$c.displayName}
+DefaultDirName={autopf}\$c.displayName
 DefaultGroupName=$c.displayName
 AllowNoIcons=yes
 LicenseFile=${expandFilename(c.license)}
 OutputBaseFilename=${if c.innosetup.installerName.len > 0: c.innosetup.installerName & "_" & c.version else: c.name & "_" & c.version}
 Compression=lzma
 SolidCompression=yes
-PrivilegesRequired=none
+PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 ChangesEnvironment=yes
 Uninstallable=no
@@ -25,10 +28,11 @@ UninstallDisplayIcon={app}\uninstall.ico
 [Languages]
 Name: english; MessagesFile: compiler:Default.isl
 
-[Files] 
+[Files]
   #for i in low(FileCategory)..fcWindows:
   #  for f in items(c.cat[i]):
-  #    let fDir = if isAbsolute(f): "" else: splitFile(f).dir
+  #    let rawDir = if isAbsolute(f): "" else: splitFile(f).dir
+  #    let fDir = if rawDir.startsWith(".."): "" else: rawDir
 Source: ${expandFilename(f).toWin}; DestDir: {app}${if fDir.len > 0: "\\" & fDir.toWin else: ""}; Flags: ignoreversion
   #  end for
   #end for
@@ -42,12 +46,12 @@ Name: modifypath; Description: &Add $c.displayName to your system path (if not i
 
 [Icons]
   #if c.app == appConsole:
-Name: {group}\Console for $c.displayName; Filename: {cmd}; Tasks: startmenuicon
+Name: {group}\$startMenuName; Filename: {cmd}; Tasks: startmenuicon
   #else:
-Name: {group}\$c.displayName; Filename: {app}\${c.name}.exe; Tasks: startmenuicon
+Name: {group}\$startMenuName; Filename: {app}\${c.name}.exe; Tasks: startmenuicon
   #end if
   #for f in items(c.cat[fcDocStart]):
-Name: {group}\Documentation; Filename: {app}\${f.toWin}; Tasks: startmenuicon
+Name: {group}\${docShortcutName(c, f)}; Filename: {app}\${f.toWin}; Tasks: startmenuicon
   #end for
 Name: {commondesktop}\$c.displayName; Filename: {app}\${c.name}.exe; Tasks: desktopicon
 
@@ -55,167 +59,99 @@ Name: {commondesktop}\$c.displayName; Filename: {app}\${c.name}.exe; Tasks: desk
 Filename: {app}\${c.name & ".exe"}; Description: {cm:LaunchProgram,$c.displayName}; Flags: nowait postinstall skipifsilent
 
 [Code]
-function GiveMeAPath(const DefaultPathName: string): string;
-begin
-  if IsAdminLoggedOn then result := ExpandConstant('{pf64}')
-  else result := ExpandConstant('{userdocs}');
-  result := result + '\' + DefaultPathName;
-end;
-
+const
+  UninstKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\${pasStr(c.name)}';
   #if c.binPaths.len > 0:
-// ----------------------------------------------------------------------------
-//
-// Inno Setup Ver:  5.2.1
-// Script Version:  1.3.1
-// Author:          Jared Breland <jbreland@legroom.net>
-// Homepage:    http://www.legroom.net/software
-//
-// Script Function:
-//  Enable modification of system path directly from Inno Setup installers
+  EnvKey = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
 
 function ModPathDir(): TArrayOfString;
 begin
   setArrayLength(result, $c.binPaths.len);
     #var i = 0
     #for b in items(c.binPaths):
-  result[$i] := ExpandConstant('{app}') + '\${b.toWin}';
+  result[$i] := ExpandConstant('{app}') + '\${pasStr(b.toWin)}';
       #inc(i)
     #end for
 end;
 
-procedure ModPath();
+// Appends each bin directory to the system PATH unless it is already there
+// and returns all of them, separated by ';', so that uninstaller.exe can
+// remove them again.
+function ModPath(): String;
 var
-  oldpath, newpath, aExecFile: String;
-  pathArr, aExecArr, pathdir: TArrayOfString;
-  i, d: Integer;
+  curPath: String;
+  pathdir: TArrayOfString;
+  d: Integer;
 begin
-  // Get array of new directories and act on each individually
+  result := '';
   pathdir := ModPathDir();
   for d := 0 to GetArrayLength(pathdir)-1 do begin
-    // Modify WinNT path
-    if UsingWinNT() then begin
-      // Get current path, split into an array
-      RegQueryStringValue(HKEY_LOCAL_MACHINE,
-        'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
-        'Path', oldpath);
-      oldpath := oldpath + ';';
-      i := 0;
-      while (Pos(';', oldpath) > 0) do begin
-        SetArrayLength(pathArr, i+1);
-        pathArr[i] := Copy(oldpath, 0, Pos(';', oldpath)-1);
-        oldpath := Copy(oldpath, Pos(';', oldpath)+1, Length(oldpath));
-        i := i + 1;
-        // Check if current directory matches app dir
-        if pathdir[d] = pathArr[i-1] then begin
-          // if uninstalling, remove dir from path
-          if IsUninstaller() then continue
-          // if installing, abort because dir was already in path
-          else abort;
-        end;
-        // Add current directory to new path
-        if i = 1 then newpath := pathArr[i-1]
-        else newpath := newpath + ';' + pathArr[i-1];
-      end;
-      // Append app dir to path if not already included
-      if not IsUninstaller() then
-        newpath := newpath + ';' + pathdir[d];
-      // Write new path
-      RegWriteStringValue(HKEY_LOCAL_MACHINE,
-        'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
-        'Path', newpath);
-    end
-    else begin
-      // Modify Win9x path
-      // Convert to shortened dirname
-      pathdir[d] := GetShortName(pathdir[d]);
-      // If autoexec.bat exists, check if app dir already exists in path
-      aExecFile := 'C:\AUTOEXEC.BAT';
-      if FileExists(aExecFile) then begin
-        LoadStringsFromFile(aExecFile, aExecArr);
-        for i := 0 to GetArrayLength(aExecArr)-1 do begin
-          if not IsUninstaller() then begin
-            // If app dir already exists while installing, abort add
-            if (Pos(pathdir[d], aExecArr[i]) > 0) then
-              abort;
-          end
-          else begin
-            // If app dir exists and = what we originally set,
-            // then delete at uninstall
-            if aExecArr[i] = 'SET PATH=%PATH%;' + pathdir[d] then
-              aExecArr[i] := '';
-          end;
-        end;
-      end;
-      // If app dir not found, or autoexec.bat didn't exist, then
-      // (create and) append to current path
-      if not IsUninstaller() then begin
-        SaveStringToFile(aExecFile, #13#10 + 'SET PATH=%PATH%;' + pathdir[d],
-                         True);
-      end
-      else begin
-        // If uninstalling, write the full autoexec out
-        SaveStringsToFile(aExecFile, aExecArr, False);
-      end;
+    if not RegQueryStringValue(HKLM, EnvKey, 'Path', curPath) then
+      curPath := '';
+    if Pos(';' + UpperCase(pathdir[d]) + ';', ';' + UpperCase(curPath) + ';') = 0 then begin
+      if (curPath <> '') and (curPath[Length(curPath)] <> ';') then
+        curPath := curPath + ';';
+      RegWriteExpandStringValue(HKLM, EnvKey, 'Path', curPath + pathdir[d]);
     end;
-
-    // Write file to flag modifypath was selected
-    // Workaround since IsTaskSelected() cannot be called at uninstall and
-    // AppName and AppId cannot be "read" in Code section
-    if not IsUninstaller() then
-      SaveStringToFile(ExpandConstant('{app}') + '\uninsTasks.txt',
-                       WizardSelectedTasks(False), False);
+    if result <> '' then result := result + ';';
+    result := result + pathdir[d];
   end;
 end;
-
   #end if
+
+// Stores Value under UninstKey, or removes a stale value left behind by an
+// earlier installation when Value is empty.
+procedure WriteUninstValue(const Name, Value: String);
+begin
+  if Value <> '' then
+    RegWriteStringValue(HKLM, UninstKey, Name, Value)
+  else
+    RegDeleteValue(HKLM, UninstKey, Name);
+end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  uninstKey: String;
+  startMenuDir, startMenuShortcut, docShortcuts, desktopShortcut: String;
 begin
   if CurStep = ssPostInstall then begin
     #if c.binPaths.len > 0:
-    if IsTaskSelected('modifypath') then
-      ModPath();
+    if WizardIsTaskSelected('modifypath') then
+      RegWriteStringValue(HKLM, UninstKey, 'PathEntries', ModPath());
     #end if
 
     // Write our own Add/Remove Programs entry pointing at uninstaller.exe
-    uninstKey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\$c.name';
-    RegWriteStringValue(HKLM, uninstKey, 'DisplayName', '$c.displayName');
-    RegWriteStringValue(HKLM, uninstKey, 'DisplayVersion', '$c.version');
-    RegWriteStringValue(HKLM, uninstKey, 'Publisher', '${c.authors[0]}');
-    RegWriteStringValue(HKLM, uninstKey, 'InstallLocation', ExpandConstant('{app}'));
-    RegWriteStringValue(HKLM, uninstKey, 'UninstallString',
+    RegWriteStringValue(HKLM, UninstKey, 'DisplayName', '${pasStr(c.displayName)}');
+    RegWriteStringValue(HKLM, UninstKey, 'DisplayVersion', '${pasStr(c.version)}');
+    RegWriteStringValue(HKLM, UninstKey, 'Publisher', '${pasStr(publisher)}');
+    RegWriteStringValue(HKLM, UninstKey, 'InstallLocation', ExpandConstant('{app}'));
+    RegWriteStringValue(HKLM, UninstKey, 'UninstallString',
       '"' + ExpandConstant('{app}') + '\uninstaller.exe"');
-    RegWriteStringValue(HKLM, uninstKey, 'DisplayIcon',
-      ExpandConstant('{app}') + '\${c.name}.exe');
-    RegWriteDWordValue(HKLM, uninstKey, 'NoModify', 1);
-    RegWriteDWordValue(HKLM, uninstKey, 'NoRepair', 1);
+    RegWriteStringValue(HKLM, UninstKey, 'DisplayIcon',
+      ExpandConstant('{app}') + '\${pasStr(c.name)}.exe');
+    RegWriteDWordValue(HKLM, UninstKey, 'NoModify', 1);
+    RegWriteDWordValue(HKLM, UninstKey, 'NoRepair', 1);
 
-    // Store shortcut paths so uninstaller.exe can remove them later
-    RegWriteStringValue(HKLM, uninstKey, 'DesktopShortcut',
-      ExpandConstant('{commondesktop}') + '\${c.displayName}.lnk');
-    RegWriteStringValue(HKLM, uninstKey, 'StartMenuShortcut',
-      ExpandConstant('{group}') + '\${c.displayName}.lnk');
+    // Store the shortcuts that were actually created, so uninstaller.exe
+    // removes those and nothing else
+    desktopShortcut := '';
+    if WizardIsTaskSelected('desktopicon') then
+      desktopShortcut := ExpandConstant('{commondesktop}') + '\${pasStr(c.displayName)}.lnk';
+
+    startMenuDir := '';
+    startMenuShortcut := '';
+    docShortcuts := '';
+    if WizardIsTaskSelected('startmenuicon') and not WizardNoIcons then begin
+      startMenuDir := ExpandConstant('{group}');
+      startMenuShortcut := startMenuDir + '\${pasStr(startMenuName)}.lnk';
+    #for f in items(c.cat[fcDocStart]):
+      if docShortcuts <> '' then docShortcuts := docShortcuts + ';';
+      docShortcuts := docShortcuts + startMenuDir + '\${pasStr(docShortcutName(c, f))}.lnk';
+    #end for
+    end;
+
+    WriteUninstValue('DesktopShortcut', desktopShortcut);
+    WriteUninstValue('StartMenuDir', startMenuDir);
+    WriteUninstValue('StartMenuShortcut', startMenuShortcut);
+    WriteUninstValue('DocShortcuts', docShortcuts);
   end;
 end;
-
-  #if c.binPaths.len > 0:
-procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
-var
-  appdir, selectedTasks: String;
-begin
-  appdir := ExpandConstant('{app}');
-  if CurUninstallStep = usUninstall then begin
-    if LoadStringFromFile(appdir + '\uninsTasks.txt', selectedTasks) then
-      if Pos('modifypath', selectedTasks) > 0 then
-        ModPath();
-    DeleteFile(appdir + '\uninsTasks.txt')
-  end;
-end;
-
-function NeedRestart(): Boolean;
-begin
-  result := IsTaskSelected('modifypath') and not UsingWinNT()
-end;
-  #end if

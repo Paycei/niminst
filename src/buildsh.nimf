@@ -43,7 +43,7 @@ do
       break;
       ;;
     -*)
-      echo 2>&1 "Error: Unknown option: $1" >&2
+      echo "Error: Unknown option: $1" >&2
       exit 1
       ;;
     *)  # No more options
@@ -86,7 +86,7 @@ fi
 if [ -n "$optcpu" ]; then
   ucpu="$optcpu"
 fi
-if [ -n "$optcpu" ]; then
+if [ -n "$optosname" ]; then
   uosname="$optosname"
 fi
 
@@ -158,14 +158,14 @@ case $uos in
     LINK_FLAGS="$LINK_FLAGS -landroid-glob"
     ;;
   *)
-    echo 2>&1 "Error: unknown operating system: $uos"
+    echo "Error: unknown operating system: $uos" >&2
     exit 1
     ;;
 esac
 
 case $ucpu in
   *i386* | *i486* | *i586* | *i686* | *bepc* | *i86pc* )
-    if [ "$isOpenIndiana" = "yes" ] || [ `uname -o` == "illumos" ] ; then
+    if [ "$isOpenIndiana" = "yes" ] || [ "`uname -o`" = "illumos" ] ; then
       mycpu="amd64"
     else
       mycpu="i386"
@@ -220,7 +220,7 @@ case $ucpu in
       mips|mipsel|mips64|mips64el)
         ;;
       *)
-        echo 2>&1 "Error: unknown MIPS target: $mycpu"
+        echo "Error: unknown MIPS target: $mycpu" >&2
         exit 1
     esac
     ;;
@@ -237,7 +237,7 @@ case $ucpu in
   *loongarch64* )
     mycpu="loongarch64" ;;
   *)
-    echo 2>&1 "Error: unknown processor: $ucpu"
+    echo "Error: unknown processor: $ucpu" >&2
     exit 1
     ;;
 esac
@@ -274,14 +274,14 @@ case $myos in
     ;;
 #    end for
   *)
-    echo 2>&1 "Error: no C code generated for: [$myos: $mycpu]"
+    echo "Error: no C code generated for: [$myos: $mycpu]" >&2
     exit 1
     ;;
   esac
   ;;
 #  end for
 *)
-  echo 2>&1 "Error: no C code generated for: [$myos: $mycpu]"
+  echo "Error: no C code generated for: [$myos: $mycpu]" >&2
   exit 1
   ;;
 esac
